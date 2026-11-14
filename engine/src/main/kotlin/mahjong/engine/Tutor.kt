@@ -66,6 +66,8 @@ class Advice(
 
 /** Turns the engine's analysis into beginner-friendly explanations. */
 object Tutor {
+    private fun poss(name: String) = if (name == "You") "your" else "$name's"
+
     private fun plural(n: Int, one: String, many: String = one + "s") = if (n == 1) "1 $one" else "$n $many"
 
     private fun yakuList(s: Score): String {
@@ -356,21 +358,29 @@ object Tutor {
     }
 
     /**
-     * Explains why seat [p] was not offered a win on the last discard although it completes the hand shape.
-     * Null if the discard does not complete the hand.
+     * Explains, for each recent discard that would have completed seat [p]'s hand, why no win was offered.
      */
-    fun missedWinNote(game: Game, p: Int, names: List<String>): String? {
-        val st = game.state
-        if (st.lastDiscard < 0 || st.lastDiscarder == p) return null
-        val pl = st.players[p]
-        if (pl.hand.size + pl.melds.size * 3 != 13) return null
-        val waits = Shanten.waits(pl.counts(), pl.melds.size)
-        if (st.lastDiscard !in waits) return null
-        if (game.winScore(p, st.lastDiscard, false) == null) {
-            return "${names[st.lastDiscarder]}'s ${Tiles.name(st.lastDiscard)} would have completed your hand, but you have no yaku, so you could not call ron. " +
-                (if (pl.isClosed) "Declaring riichi when you are ready avoids this." else "An open hand needs a yaku such as a value-tile triplet or all simples.")
+    fun missedWins(game: Game, p: Int, events: List<GameEvent>, names: List<String>): List<String> {
+        val pl = game.state.players[p]
+        val c = pl.counts()
+        val size = pl.hand.size + pl.melds.size * 3
+        if (size == 14 && pl.drawn >= 0) c[pl.drawn]-- else if (size != 13) return emptyList()
+        val waits = Shanten.waits(c, pl.melds.size)
+        if (waits.isEmpty()) return emptyList()
+        val out = LinkedHashSet<String>()
+        for (e in events) {
+            if (e !is GameEvent.Discarded || e.p == p || e.tile !in waits) continue
+            c[e.tile]++
+            val noYaku = Scorer.evaluate(c, pl.melds, game.context(p, e.tile, false).copy(houtei = false, chankan = false)) == null
+            c[e.tile]--
+            val head = "${names[e.p]}'s ${Tiles.name(e.tile)} would have completed your hand, but "
+            out.add(
+                if (noYaku) head + "you have no yaku, so you could not call ron. " +
+                    (if (pl.isClosed) "Declaring riichi when you are ready avoids this." else "An open hand needs a yaku, such as a triplet of value tiles or only tiles from 2 to 8.")
+                else head + "you are furiten (one of your winning tiles was already discarded by you, or you let one go by), so you could not call ron."
+            )
         }
-        return "${names[st.lastDiscarder]}'s ${Tiles.name(st.lastDiscard)} would have completed your hand, but you are furiten (one of your winning tiles was already discarded by you or passed up), so you could not call ron."
+        return out.toList()
     }
 
     /** Plain-English description of recent events. */
@@ -378,7 +388,7 @@ object Tutor {
         val out = ArrayList<String>()
         for (e in events) {
             when (e) {
-                is GameEvent.HandStarted -> out.add("New hand: ${st.handName}. ${names[st.dealer]} ${if (st.dealer == viewer) "are" else "is"} the dealer (East).")
+                is GameEvent.HandStarted -> out.add("New hand: ${st.handName}. ${names[st.dealer]} ${if (st.dealer == viewer) "are" else "is"} the dealer (East) and ${if (st.dealer == viewer) "play" else "plays"} first.")
                 is GameEvent.Drew -> if (e.p == viewer) {
                     val t = st.players[viewer].drawn
                     if (t >= 0 && e === events.last { it is GameEvent.Drew }) out.add(if (e.rinshan) "You drew a replacement tile: ${Tiles.name(t)}." else "You drew ${Tiles.name(t)}.")
@@ -387,10 +397,10 @@ object Tutor {
                     "${names[e.p]} ${if (e.riichi) "declared RIICHI and discarded" else "discarded"} ${Tiles.name(e.tile)}."
                 )
                 is GameEvent.Called -> out.add(
-                    when (e.type) {
-                        MeldType.CHI -> "${names[e.p]} called chi on ${names[e.from]}'s ${Tiles.name(e.tile)} (a sequence)."
-                        MeldType.PON -> "${names[e.p]} called pon on ${names[e.from]}'s ${Tiles.name(e.tile)} (a triplet)."
-                        MeldType.OPEN_KAN -> "${names[e.p]} called kan on ${names[e.from]}'s ${Tiles.name(e.tile)} (four of a kind)."
+                    when (e.meld) {
+                        MeldType.CHI -> "${names[e.p]} called chi on ${poss(names[e.from])} ${Tiles.name(e.tile)} (a sequence)."
+                        MeldType.PON -> "${names[e.p]} called pon on ${poss(names[e.from])} ${Tiles.name(e.tile)} (a triplet)."
+                        MeldType.OPEN_KAN -> "${names[e.p]} called kan on ${poss(names[e.from])} ${Tiles.name(e.tile)} (four of a kind)."
                         MeldType.ADDED_KAN -> "${names[e.p]} added a fourth ${Tiles.name(e.tile)} to a pon, making a kan."
                         MeldType.CLOSED_KAN -> "${names[e.p]} declared a concealed kan of ${Tiles.name(e.tile)}."
                     }
@@ -409,12 +419,12 @@ object Tutor {
         val s = w.score
         val out = ArrayList<String>()
         val who = names[w.winner]
-        out.add(if (w.loser < 0) "$who won by tsumo (self-draw) on ${Tiles.name(w.winTile)}." else "$who won by ron on ${names[w.loser]}'s ${Tiles.name(w.winTile)}.")
+        out.add(if (w.loser < 0) "$who won by tsumo (self-draw) on ${Tiles.name(w.winTile)}." else "$who won by ron on ${poss(names[w.loser])} ${Tiles.name(w.winTile)}.")
         if (s.yakumanCount > 0) {
             out.add("Yakuman! ${s.yaku.joinToString(", ") { it.yaku.english }}: the highest hand value, a base of ${fmt(s.base)} points.")
         } else {
             out.add("Han: ${yakuList(s)} = ${s.han} han in total.")
-            out.add("Fu: ${s.fuItems.joinToString(" + ") { "${it.label} ${it.fu}" }} = ${s.fu} fu.")
+            out.add("Fu: ${s.fuItems.joinToString(" + ") { "${it.fu} (${it.label.replaceFirstChar { c -> c.lowercase() }})" }} = ${s.fu} fu.")
             if (s.limit.isEmpty()) {
                 out.add("Base points = fu x 2^(han+2) = ${s.fu} x ${1 shl (s.han + 2)} = ${fmt(s.base)}.")
             } else {

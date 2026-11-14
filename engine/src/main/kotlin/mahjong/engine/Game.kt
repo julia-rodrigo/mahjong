@@ -29,7 +29,7 @@ sealed class GameEvent {
     @Serializable data object HandStarted : GameEvent()
     @Serializable data class Drew(val p: Int, val rinshan: Boolean) : GameEvent()
     @Serializable data class Discarded(val p: Int, val tile: Int, val tsumogiri: Boolean, val riichi: Boolean) : GameEvent()
-    @Serializable data class Called(val p: Int, val from: Int, val type: MeldType, val tile: Int) : GameEvent()
+    @Serializable data class Called(val p: Int, val from: Int, val meld: MeldType, val tile: Int) : GameEvent()
     @Serializable data class DoraRevealed(val indicator: Int) : GameEvent()
     @Serializable data class RiichiAccepted(val p: Int) : GameEvent()
 }

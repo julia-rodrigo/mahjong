@@ -229,19 +229,23 @@ class GameTest {
     }
 
     @Test fun saveAndResume() {
-        val rng = Random(5)
-        val g = Game.create(GameConfig(), rng)
-        repeat(60) {
-            if (g.state.phase == Phase.HAND_END) g.nextHand()
-            val p = g.actors().first()
-            g.act(p, Ai.decide(g, p, Difficulty.NORMAL, rng))
+        // Save and reload after every single step of several games: every state must survive a round trip.
+        repeat(6) { seed ->
+            val rng = Random(seed + 40)
+            var g = Game.create(GameConfig(), rng)
+            var steps = 0
+            while (g.state.phase != Phase.GAME_END) {
+                val json = Json.encodeToString(GameState.serializer(), g.state)
+                val back = Json.decodeFromString(GameState.serializer(), json)
+                assertEquals(json, Json.encodeToString(GameState.serializer(), back))
+                g = Game(back, rng)
+                if (g.state.phase == Phase.HAND_END) { g.nextHand(); continue }
+                val p = g.actors().first()
+                val acts = g.legalActions(p)
+                // random play produces plenty of calls and kans
+                g.act(p, if (steps++ % 3 == 0) acts[rng.nextInt(acts.size)] else Ai.decide(g, p, Difficulty.NORMAL, rng))
+            }
         }
-        val json = Json.encodeToString(GameState.serializer(), g.state)
-        val back = Json.decodeFromString(GameState.serializer(), json)
-        assertEquals(json, Json.encodeToString(GameState.serializer(), back))
-        val g2 = Game(back)
-        assertEquals(g.actors(), g2.actors())
-        assertEquals(g.legalActions(g.actors().first()), g2.legalActions(g2.actors().first()))
     }
 }
 
@@ -267,7 +271,8 @@ class TutorTest {
                 for (t in adv.terms) Glossary[t]
                 if (g.state.phase == Phase.DISCARD) {
                     for (a in acts.filterIsInstance<Action.Discard>()) Tutor.discardNote(g, p, a.tile, names)
-                } else Tutor.missedWinNote(g, 0, names)
+                }
+                Tutor.missedWins(g, 0, g.state.events.takeLast(8), names)
                 Tutor.narrate(g.state.events.takeLast(6), 0, names, g.state)
                 // mix of sensible and odd play so the tutor sees open hands without yaku too
                 g.act(p, if (rng.nextInt(4) == 0) acts[rng.nextInt(acts.size)] else Ai.decide(g, p, Difficulty.NORMAL, rng))
